@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, test } from 'node:test';
-import { Client, close, db, family, PASSWORD, staff } from './helpers.ts';
+import { Client, clone, close, db, family, nextCode, PASSWORD, staff, totp } from './helpers.ts';
 
 let principal: Client, office: Client, teacher: Client, parent: Client;
 let aarav: string, otherStudent: string, sec9A: number, sec9B: number;
@@ -8,6 +8,8 @@ let aarav: string, otherStudent: string, sec9A: number, sec9B: number;
 before(async () => {
   // Reset the lockout state the tests below create.
   await db.q(`UPDATE users SET failed_logins = 0, locked_until = NULL`);
+  // Start from 'not enrolled' so the enrolment path is exercised every run.
+  await db.q(`UPDATE users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE role IN ('principal','office')`);
   principal = await staff('principal@shastra.school');
   office = await staff('office@shastra.school');
   teacher = await staff('teacher@shastra.school');
@@ -17,7 +19,12 @@ before(async () => {
   sec9A = (await db.q1(`SELECT s.id FROM sections s JOIN classes c ON c.id = s.class_id WHERE c.grade = 9 AND s.name = 'A'`)).id;
   sec9B = (await db.q1(`SELECT s.id FROM sections s JOIN classes c ON c.id = s.class_id WHERE c.grade = 9 AND s.name = 'B'`)).id;
 });
-after(close);
+after(async () => {
+  // Leave the demo Principal/Office ready for a person to set up two-step login with their own phone.
+  await db.q(`UPDATE users SET totp_secret_enc = NULL, totp_enabled_at = NULL, totp_last_step = NULL WHERE role IN ('principal','office')`);
+  await db.q(`DELETE FROM mfa_recovery_codes`);
+  await close();
+});
 
 describe('authentication', () => {
   test('protected endpoints require a session', async () => {
@@ -27,7 +34,7 @@ describe('authentication', () => {
 
   test('session cookie is HttpOnly + SameSite and never readable by scripts', async () => {
     const c = new Client();
-    const r = await c.req('POST', '/api/auth/login', { email: 'office@shastra.school', password: PASSWORD });
+    const r = await c.req('POST', '/api/auth/login', { email: 'suma.latha@shastra.school', password: PASSWORD });
     const sc = r.headers.getSetCookie().find((x) => x.startsWith('sc_sid='))!;
     assert.match(sc, /HttpOnly/i);
     assert.match(sc, /SameSite=Lax/i);
@@ -75,16 +82,70 @@ describe('authentication', () => {
   });
 });
 
+describe('two-step login (Principal & Office)', () => {
+  test('a correct password alone does not create a session', async () => {
+    const c = new Client();
+    const r = await c.post('/api/auth/login', { email: 'principal@shastra.school', password: PASSWORD });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.mfa, 'verify');
+    assert.equal((await c.get('/api/auth/me')).status, 401);
+    assert.equal((await c.get('/api/dashboard/principal')).status, 401);
+  });
+
+  test('wrong codes are rejected and the challenge dies after 5 attempts', async () => {
+    const c = new Client();
+    await c.post('/api/auth/login', { email: 'office@shastra.school', password: PASSWORD });
+    for (let i = 0; i < 5; i++) assert.equal((await c.post('/api/auth/mfa/verify', { code: '000000' })).status, 400);
+    const sixth = await c.post('/api/auth/mfa/verify', { code: await nextCode('office@shastra.school') });
+    assert.equal(sixth.status, 401); // must start again with the password
+  });
+
+  test('a code cannot be used twice (replay protection)', async () => {
+    const code = await nextCode('office@shastra.school');
+    const a = new Client();
+    await a.post('/api/auth/login', { email: 'office@shastra.school', password: PASSWORD });
+    assert.equal((await a.post('/api/auth/mfa/verify', { code })).status, 200);
+    const b = new Client();
+    await b.post('/api/auth/login', { email: 'office@shastra.school', password: PASSWORD });
+    assert.equal((await b.post('/api/auth/mfa/verify', { code })).status, 400);
+  });
+
+  test('recovery codes work exactly once, and secrets are stored encrypted', async () => {
+    const r = await principal.post('/api/auth/mfa/recovery-codes', { code: await nextCode('principal@shastra.school') });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.recoveryCodes.length, 10);
+    const rc = r.data.recoveryCodes[0];
+    for (const expected of [200, 400]) {
+      const c = new Client();
+      await c.post('/api/auth/login', { email: 'principal@shastra.school', password: PASSWORD });
+      assert.equal((await c.post('/api/auth/mfa/verify', { code: rc })).status, expected);
+    }
+    const row = await db.q1(`SELECT totp_secret_enc FROM users WHERE email = 'principal@shastra.school'`);
+    assert.match(row.totp_secret_enc, /^v1\./);
+    assert.ok(totp.decryptSecret(row.totp_secret_enc).length >= 32);
+  });
+
+  test('the Principal can reset two-step login for the Office; teachers cannot', async () => {
+    const officeUser = await db.q1(`SELECT id FROM users WHERE email = 'office@shastra.school'`);
+    const t = await staff('suma.latha@shastra.school');
+    assert.equal((await t.req('PATCH', `/api/school/staff/${officeUser.id}`, { reset_mfa: true })).status, 403);
+    assert.equal((await principal.req('PATCH', `/api/school/staff/${officeUser.id}`, { reset_mfa: true })).status, 200);
+    const c = new Client();
+    const r = await c.post('/api/auth/login', { email: 'office@shastra.school', password: PASSWORD });
+    assert.equal(r.data.mfa, 'enroll');
+    office = await staff('office@shastra.school'); // the reset signed the Office out everywhere
+  });
+});
 describe('CSRF', () => {
   test('state-changing request without the CSRF header is rejected', async () => {
-    const c = await staff('principal@shastra.school');
+    const c = clone(principal);
     c.csrf = false;
     const r = await c.post('/api/notices', { title: 'x', body: 'y' });
     assert.equal(r.status, 403);
   });
 
   test('cross-origin request is rejected even with a valid session', async () => {
-    const c = await staff('principal@shastra.school');
+    const c = clone(principal);
     c.origin = 'https://evil.example';
     const r = await c.post('/api/notices', { title: 'x', body: 'y' });
     assert.equal(r.status, 403);
@@ -159,6 +220,9 @@ describe('school flows', () => {
   });
 
   test('online fee payment: server decides the amount and issues a receipt', async () => {
+    await db.q(`
+      INSERT INTO fee_items (student_id, academic_year_id, term, title, amount, due_on)
+      SELECT $1, (SELECT id FROM academic_years WHERE is_current), 'Test term', 'Test fee ' || now()::text, 1500, CURRENT_DATE + 10`, [aarav]);
     const ledger = await parent.get(`/api/fees/students/${aarav}`);
     const due = ledger.data.items.find((i: any) => i.balance > 0);
     assert.ok(due, 'demo child should have a fee due');

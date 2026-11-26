@@ -28,11 +28,13 @@ Keep that window open while you use the app. Close it (or press **Ctrl+C**) to s
 
 | Sign in as | Login |
 | --- | --- |
-| **Principal** | `principal@shastra.school` · password `Shastra@2026demo` |
-| **School Office** | `office@shastra.school` · password `Shastra@2026demo` |
+| **Principal** | `principal@shastra.school` · password `Shastra@2026demo` · then two-step login (see below) |
+| **School Office** | `office@shastra.school` · password `Shastra@2026demo` · then two-step login |
 | **Teacher** (class teacher of 9-A, Maths for Classes 9–10) | `teacher@shastra.school` · password `Shastra@2026demo` |
 | **Parent** (children Aarav 9-A and Ananya 6-B) | *Parent / Student* tab → mobile `9000000001` → the 6-digit code appears in the START-HERE window as `OTP for +919000000001: 123456` |
 | **Student** | *Parent / Student* tab → mobile `9000000002` |
+
+**Two-step login (Principal and Office).** The first time you sign in, install **Google Authenticator** or **Microsoft Authenticator** on your phone, tap **+**, scan the QR code and type the 6-digit code. Save the 10 recovery codes it shows. After that, every sign-in needs the password **and** the current 6-digit code from the app. If a phone is lost, sign in with a recovery code, or ask the Principal to reset it under **Staff & classes**.
 
 On your computer, WhatsApp messages are printed in that window instead of being sent. Payments open a
 *Simulate successful payment* test dialog, so no real money moves.
@@ -78,7 +80,9 @@ Automatic WhatsApp messages cover:
 | `npm run create-principal -- --email a@b.in --name "Name"` | Create the first real Principal account |
 | `npm run preflight` | Production readiness check of `.env` (`-- --online` also tests the domain, WhatsApp and Razorpay) |
 | `npm run check` | Typecheck + lint + tests + dependency audit (run before every release) |
-| `npm test` | API integration tests (security + core flows; needs a seeded database) |
+| `npm test` | API integration tests (security, two-step login, core flows; needs a seeded database) |
+| `npm run e2e` | Browser tests with Playwright: every role and every screen, including two-step login (reloads the demo data) |
+| `npm run reset-mfa -- --email a@b.in` | Emergency: clear two-step login for someone who lost their phone **and** their recovery codes |
 | `npm run build` | Production build of the web app |
 
 **Stack (latest stable, Nov 2026):**

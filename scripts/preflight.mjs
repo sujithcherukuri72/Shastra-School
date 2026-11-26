@@ -39,7 +39,8 @@ else ok(`DOMAIN=${env.DOMAIN}`);
 // 3. Secrets
 for (const k of ['POSTGRES_SUPERUSER_PASSWORD', 'DB_APP_PASSWORD']) weak(env[k]) ? bad(`${k} is weak or a placeholder`, 'use 24+ random characters (start.ps1 generates them)') : ok(`${k} is strong`);
 (env.SESSION_SECRET ?? '').length >= 32 && !weak(env.SESSION_SECRET) ? ok('SESSION_SECRET is strong') : bad('SESSION_SECRET is weak or a placeholder', 'use 48+ random characters');
-new Set([env.POSTGRES_SUPERUSER_PASSWORD, env.DB_APP_PASSWORD, env.SESSION_SECRET]).size === 3 ? ok('Secrets are all different') : bad('Two secrets are identical', 'every secret must be different');
+(env.MFA_ENCRYPTION_KEY ?? '').length >= 32 && !weak(env.MFA_ENCRYPTION_KEY) ? ok('MFA_ENCRYPTION_KEY is strong') : bad('MFA_ENCRYPTION_KEY is weak or a placeholder', 'use 48+ random characters (start.ps1 generates it)');
+new Set([env.POSTGRES_SUPERUSER_PASSWORD, env.DB_APP_PASSWORD, env.SESSION_SECRET, env.MFA_ENCRYPTION_KEY]).size === 4 ? ok('Secrets are all different') : bad('Two secrets are identical', 'every secret must be different');
 
 // 4. WhatsApp
 for (const k of ['WHATSAPP_PHONE_NUMBER_ID', 'WHATSAPP_ACCESS_TOKEN', 'WHATSAPP_APP_SECRET']) filled(k) ? ok(k) : bad(`${k} is empty`, 'see section 6 of .env and docs/WHATSAPP.md');

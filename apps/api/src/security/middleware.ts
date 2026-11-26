@@ -1,6 +1,6 @@
 import type { NextFunction, Request, Response } from 'express';
 import { rateLimit, ipKeyGenerator } from 'express-rate-limit';
-import { env } from '../config/env.ts';
+import { env, isProd } from '../config/env.ts';
 import { forbidden, unauthorized } from '../lib/http.ts';
 import { safeEqual } from './crypto.ts';
 import { type Role, SESSION_COOKIE, loadSession } from './sessions.ts';
@@ -60,7 +60,8 @@ export function noStore(_req: Request, res: Response, next: NextFunction) {
 const limiter = (windowMs: number, limit: number, keyFn?: (req: Request) => string) =>
   rateLimit({
     windowMs,
-    limit,
+    // Strict in production. Relaxed on a developer machine, where test suites sign in many times from one IP.
+    limit: isProd ? limit : limit * 10,
     standardHeaders: 'draft-8',
     legacyHeaders: false,
     keyGenerator: keyFn ?? ((req) => ipKeyGenerator(req.ip ?? '0.0.0.0')),

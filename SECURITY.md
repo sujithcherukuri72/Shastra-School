@@ -15,6 +15,15 @@ layer, and the API's integration tests check the controls below (`npm test`).
   - the response is identical whether or not the number is registered, so numbers cannot be enumerated
 - **Brute force:** an account locks for 15 minutes after 5 failures, and login, OTP and payment endpoints are
   rate-limited per IP. Error messages are generic and timing is equalised with a dummy hash.
+- **Two-step login (TOTP)** is required for the **Principal** and **School Office**.
+  - After a correct password, only a 10-minute, single-purpose challenge cookie is issued; no session exists yet.
+  - Codes follow RFC 6238 (SHA-1, 6 digits, 30-second window, ±1 step for clock drift). A code that has been
+    used once is rejected (replay protection), and a challenge allows at most 5 attempts.
+  - Secrets are encrypted with AES-256-GCM using `MFA_ENCRYPTION_KEY`, a key separate from `SESSION_SECRET`.
+  - There are 10 single-use recovery codes, each stored as a SHA-256 hash.
+  - The Principal can reset another staff member's two-step login, which signs them out everywhere. Server
+    administrators can use `npm run reset-mfa` in an emergency.
+  - Enrolments, failures, recovery-code use and resets are all written to the audit log.
 - **Sessions** are opaque 256-bit tokens. Only a SHA-256 of each token is stored. The cookie is
   `__Host-sc_sid`, which means `HttpOnly; Secure; SameSite=Lax; Path=/` with no Domain.
   - Staff sessions expire after 12 hours, family sessions after 30 days.
@@ -107,7 +116,8 @@ The Principal can view it in the app.
 
 Run `npm run preflight -- --online` first. It checks every item it can automatically.
 
-- [ ] Fresh `SESSION_SECRET`, `DB_APP_PASSWORD` and `POSTGRES_SUPERUSER_PASSWORD`, each from a CSPRNG.
+- [ ] Fresh `SESSION_SECRET`, `MFA_ENCRYPTION_KEY`, `DB_APP_PASSWORD` and `POSTGRES_SUPERUSER_PASSWORD`, each from a CSPRNG.
+- [ ] The Principal and Office have set up two-step login and stored their recovery codes safely (printed and locked away).
 - [ ] `.env` is `chmod 600` and never committed.
 - [ ] `DOMAIN` points at the server, so Caddy can obtain the certificate.
 - [ ] Firewall: allow 22 (SSH key only), 80 and 443; deny everything else.

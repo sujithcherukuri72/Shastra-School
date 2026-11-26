@@ -931,7 +931,9 @@ export function SetupPage() {
 }
 
 function StaffTab() {
+  const { me } = useAuth();
   const q = useApi('/school/staff');
+  const resetMfa = useAction((id: string) => api.patch(`/school/staff/${id}`, { reset_mfa: true }), ['/school']);
   const [form, setForm] = useState<any>(null);
   const toast = useToast();
   const save = useAction((b: any) => (form?.id ? api.patch(`/school/staff/${form.id}`, b) : api.post('/school/staff', b)), ['/school']);
@@ -951,13 +953,14 @@ function StaffTab() {
       <CardHeader title="Staff accounts" action={<Button size="sm" onClick={() => setForm({})}><UserPlus className="size-4" /> Add staff</Button>} />
       <Async q={q}>
         {(rows: any[]) => (
-          <Table head={['Name', 'Role', 'Email', 'Phone', 'Last sign-in', 'Status', '']}>
+          <Table head={['Name', 'Role', 'Email', 'Phone', 'Two-step', 'Last sign-in', 'Status', '']}>
             {rows.map((u) => (
               <tr key={u.id}>
                 <Td className="font-semibold">{u.full_name}</Td>
                 <Td><Badge tone={u.role === 'principal' ? 'navy' : u.role === 'office' ? 'gold' : 'neutral'}>{u.role}</Badge></Td>
                 <Td className="text-navy-500">{u.email}</Td>
                 <Td className="text-navy-500">{u.phone}</Td>
+                <Td>{u.role === 'teacher' ? <span className="text-xs text-navy-300">—</span> : u.mfa_enabled ? <Badge tone="good">On</Badge> : <Badge tone="warn">Not set up</Badge>}</Td>
                 <Td className="text-xs text-navy-400">{u.last_login_at ? fmtDateTime(u.last_login_at) : 'Never'}</Td>
                 <Td>{u.is_active ? <Badge tone="good">Active</Badge> : <Badge tone="bad">Disabled</Badge>}</Td>
                 <Td><Button size="sm" variant="ghost" onClick={() => setForm(u)}>Edit</Button></Td>
@@ -980,6 +983,14 @@ function StaffTab() {
               <Input name="password" type="password" autoComplete="new-password" required={!form.id} minLength={10} />
             </Field>
             {form.id && <label className="flex items-center gap-2 text-sm font-semibold"><input type="checkbox" name="is_active" defaultChecked={form.is_active} className="accent-navy-800" /> Account active</label>}
+            {form.id && form.role !== 'teacher' && form.mfa_enabled && form.id !== me?.user.id && (
+              <Button type="button" variant="secondary" size="sm" loading={resetMfa.isPending} onClick={async () => {
+                if (!confirm(`Reset two-step login for ${form.full_name}? They will be signed out and must scan a new QR code at their next sign-in.`)) return;
+                await resetMfa.mutateAsync(form.id);
+                toast('Two-step login reset');
+                setForm(null);
+              }}>Reset two-step login (lost phone)</Button>
+            )}
             <ErrorBox error={save.error} />
             <Button type="submit" className="w-full" loading={save.isPending}>Save</Button>
           </form>

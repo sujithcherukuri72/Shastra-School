@@ -55,6 +55,7 @@ if (-not (Test-Path .env)) {
   $c = $c -replace '(?m)^DB_APP_PASSWORD=.*$', "DB_APP_PASSWORD=$app"
   $c = $c -replace '(?m)^DATABASE_URL=.*$', "DATABASE_URL=postgresql://shastra_app:$app@localhost:5432/shastra"
   $c = $c -replace '(?m)^SESSION_SECRET=.*$', "SESSION_SECRET=$(New-Secret 48)"
+  $c = $c -replace '(?m)^MFA_ENCRYPTION_KEY=.*$', "MFA_ENCRYPTION_KEY=$(New-Secret 48)"
   $c = $c -replace '(?m)^WHATSAPP_VERIFY_TOKEN=.*$', "WHATSAPP_VERIFY_TOKEN=$(New-Secret 32)"
   $c = $c -replace '(?m)^RAZORPAY_WEBHOOK_SECRET=.*$', "RAZORPAY_WEBHOOK_SECRET=$(New-Secret 32)"
   [IO.File]::WriteAllText((Join-Path $PSScriptRoot '.env'), $c)

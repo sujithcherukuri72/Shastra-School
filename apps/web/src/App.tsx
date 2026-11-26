@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router';
 import { FamilyLayout, StaffLayout } from './components/layouts.tsx';
 import { Spinner } from './components/ui.tsx';
+import { ServerUnavailable } from './components/resilience.tsx';
 import { homeFor, useAuth, type Role } from './lib/auth.tsx';
 import {
   EventsList, FamilyAttendance, FamilyFees, FamilyHome, FamilyHomework, FamilyLibrary, FamilyMore, FamilyProgress, NoticesList, Notifications,
@@ -31,8 +32,9 @@ const T: Role[] = ['teacher'];
 const F: Role[] = ['parent', 'student'];
 
 export default function App() {
-  const { me, loading } = useAuth();
+  const { me, loading, offline, refresh } = useAuth();
   if (loading) return <Spinner label="Opening Shastra Connect…" />;
+  if (offline) return <ServerUnavailable onRetry={refresh} />;
   const g = (roles: Role[], el: ReactNode) => <Guard roles={roles}>{el}</Guard>;
 
   return (

@@ -54,12 +54,45 @@ export class Client {
 
 export const PASSWORD = 'Shastra@2026demo';
 
+const totp = await import('../src/security/totp.ts');
+
+/** A valid authenticator code for this user that has not been used yet (waits for the next 30 s step if needed). */
+export async function nextCode(email: string) {
+  for (;;) {
+    const u = await db.q1('SELECT totp_secret_enc, totp_last_step FROM users WHERE email = $1', [email]);
+    const secret = totp.decryptSecret(u.totp_secret_enc);
+    const t = totp.currentStep();
+    const last = u.totp_last_step == null ? -1 : Number(u.totp_last_step);
+    for (const step of [t - 1, t, t + 1]) if (step > last) return totp.totpAt(secret, step);
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+}
+
+/** Sign in a staff member, completing two-step login (enrolling first if needed) for Principal/Office. */
 export async function staff(email: string) {
   const c = new Client();
   const r = await c.post('/api/auth/login', { email, password: PASSWORD });
   if (r.status !== 200) throw new Error(`login failed for ${email}: ${r.status} ${JSON.stringify(r.data)}`);
+  if (r.data.mfa === 'enroll') {
+    const s = await c.get('/api/auth/mfa/setup');
+    const code = totp.totpAt(s.data.secret.replace(/\s/g, ''), totp.currentStep());
+    const e = await c.post('/api/auth/mfa/enroll', { code });
+    if (e.status !== 200) throw new Error(`enrol failed: ${JSON.stringify(e.data)}`);
+  } else if (r.data.mfa === 'verify') {
+    const v = await c.post('/api/auth/mfa/verify', { code: await nextCode(email) });
+    if (v.status !== 200) throw new Error(`mfa failed: ${JSON.stringify(v.data)}`);
+  }
   return c;
 }
+
+/** Same session, separate client (to test CSRF/origin handling without signing in again). */
+export function clone(c: Client) {
+  const n = new Client();
+  n.cookies = new Map(c.cookies);
+  return n;
+}
+
+export { totp };
 
 export async function family(phone: string) {
   const c = new Client();

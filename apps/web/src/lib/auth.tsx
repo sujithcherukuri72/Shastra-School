@@ -20,6 +20,7 @@ export interface Me {
   school: { name: string; shortName: string; city: string };
   payments: { provider: 'mock' | 'razorpay'; keyId: string | null };
   children?: Child[];
+  mfa?: { enabled: boolean; enabled_at: string | null; recovery_left: number };
   classTeacherOf?: { section_id: number; section_name: string; class_id: number; class_name: string }[];
   teaches?: { section_id: number; section_name: string; class_id: number; class_name: string; subject_id: number; subject_name: string }[];
 }
@@ -27,6 +28,8 @@ export interface Me {
 interface AuthState {
   me: Me | null;
   loading: boolean;
+  /** The API could not be reached (server down / network) - distinct from 'signed out'. */
+  offline: boolean;
   child: Child | null;
   setChildId: (id: string) => void;
   logout: () => Promise<void>;
@@ -37,7 +40,7 @@ const Ctx = createContext<AuthState | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const qc = useQueryClient();
-  const meQ = useApi<Me | { user: null }>('/auth/session', { retry: false, staleTime: 5 * 60_000 });
+  const meQ = useApi<Me | { user: null }>('/auth/session', { retry: 1, staleTime: 5 * 60_000, refetchOnWindowFocus: false });
   const me = meQ.error instanceof ApiError && meQ.error.status === 401 ? null : meQ.data?.user ? (meQ.data as Me) : null;
   const [childId, setChildId] = useState<string | null>(() => sessionStorage.getItem('sc_child'));
 
@@ -53,6 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return {
       me,
       loading: meQ.isLoading,
+      offline: !!meQ.error && !(meQ.error instanceof ApiError && meQ.error.status < 500),
       child,
       setChildId: (id) => {
         sessionStorage.setItem('sc_child', id);

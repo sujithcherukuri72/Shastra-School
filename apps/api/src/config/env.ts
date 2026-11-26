@@ -33,6 +33,7 @@ const schema = z
     DATABASE_URL: z.string().startsWith('postgres'),
 
     SESSION_SECRET: z.string().min(32, 'SESSION_SECRET must be at least 32 characters'),
+    MFA_ENCRYPTION_KEY: z.string().min(32, 'MFA_ENCRYPTION_KEY must be at least 32 characters'),
     STAFF_SESSION_HOURS: z.coerce.number().int().min(1).max(72).default(12),
     FAMILY_SESSION_DAYS: z.coerce.number().int().min(1).max(90).default(30),
 
@@ -62,6 +63,7 @@ const schema = z
     const weak = /change-me|replace-with|CHANGE_ME/i;
     if (prod) {
       if (weak.test(e.SESSION_SECRET)) ctx.addIssue({ code: 'custom', path: ['SESSION_SECRET'], message: 'Set a real random secret in production' });
+      if (weak.test(e.MFA_ENCRYPTION_KEY) || e.MFA_ENCRYPTION_KEY === e.SESSION_SECRET) ctx.addIssue({ code: 'custom', path: ['MFA_ENCRYPTION_KEY'], message: 'Set a real random key (different from SESSION_SECRET) in production' });
       if (weak.test(e.DATABASE_URL)) ctx.addIssue({ code: 'custom', path: ['DATABASE_URL'], message: 'Set a real database password in production' });
       if (!e.APP_ORIGIN.startsWith('https://')) ctx.addIssue({ code: 'custom', path: ['APP_ORIGIN'], message: 'APP_ORIGIN must be https:// in production' });
       if (e.PAYMENT_PROVIDER === 'mock') ctx.addIssue({ code: 'custom', path: ['PAYMENT_PROVIDER'], message: 'The mock payment provider is not allowed in production' });

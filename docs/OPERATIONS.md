@@ -22,7 +22,7 @@ sudo usermod -aG docker $USER && newgrp docker
 git clone <your-repo-url> shastra-connect && cd shastra-connect
 cp .env.example .env && chmod 600 .env
 # Generate secrets (run once per value):
-openssl rand -base64 48 | tr -d '\n=/+' ; echo     # for POSTGRES_SUPERUSER_PASSWORD, DB_APP_PASSWORD, SESSION_SECRET, WHATSAPP_VERIFY_TOKEN, RAZORPAY_WEBHOOK_SECRET
+openssl rand -base64 48 | tr -d '\n=/+' ; echo     # for POSTGRES_SUPERUSER_PASSWORD, DB_APP_PASSWORD, SESSION_SECRET, MFA_ENCRYPTION_KEY, WHATSAPP_VERIFY_TOKEN, RAZORPAY_WEBHOOK_SECRET
 nano .env   # fill every [YOU] value and set the 4 PRODUCTION SWITCHES (section 1)
 npm run preflight -- --online   # needs Node 24+; or: docker run --rm -v $PWD:/app -w /app node:26-alpine node scripts/preflight.mjs --online
 
@@ -45,6 +45,7 @@ Open `https://connect.yourschool.in`, sign in as the Principal, then:
 | Status | `docker compose -f docker-compose.prod.yml ps` |
 | Logs | `docker compose -f docker-compose.prod.yml logs -f api worker` |
 | Update to a new version | `git pull && docker compose -f docker-compose.prod.yml up -d --build` (migrations run on start) |
+| Staff lost phone **and** recovery codes | `docker compose -f docker-compose.prod.yml exec api node src/db/reset-mfa.ts --email person@school.in` |
 | Restart | `docker compose -f docker-compose.prod.yml restart api worker` |
 | Manual backup | `docker compose -f docker-compose.prod.yml exec backup sh -c 'pg_dump -h db -U $DB_APP_USER -d $DB_NAME -Fc -f /backups/manual.dump'` |
 | Restore | `docker compose -f docker-compose.prod.yml exec -T db pg_restore -U postgres -d shastra --clean --if-exists < backups/shastra_YYYY-MM-DD_HHMM.dump` |

@@ -6,6 +6,7 @@ import { audit } from '../security/audit.ts';
 import { requireRole } from '../security/middleware.ts';
 import { hashPassword, strongPassword } from '../security/password.ts';
 import { destroyAllSessions } from '../security/sessions.ts';
+import { resetMfa } from '../security/mfa.ts';
 
 const r = Router();
 const principal = requireRole('principal');
@@ -27,7 +28,7 @@ r.get('/meta', staff, async (_req, res) => {
 // ── Staff accounts (principal only) ─────────────────────────────────────────
 r.get('/staff', requireRole('principal', 'office'), async (_req, res) => {
   res.json(
-    await q(`SELECT u.id, u.role, u.full_name, u.email, u.phone, u.dob, u.is_active, u.last_login_at,
+    await q(`SELECT u.id, u.role, u.full_name, u.email, u.phone, u.dob, u.is_active, u.last_login_at, (u.totp_enabled_at IS NOT NULL) AS mfa_enabled,
                     (SELECT json_agg(json_build_object('section_id', ta.section_id, 'subject_id', ta.subject_id)) FROM teaching_assignments ta WHERE ta.teacher_id = u.id) AS teaches,
                     (SELECT json_agg(sec.id) FROM sections sec WHERE sec.class_teacher_id = u.id) AS class_teacher_of
                FROM users u WHERE u.role IN ('principal','office','teacher') ORDER BY u.role, u.full_name`),
@@ -63,10 +64,12 @@ r.patch('/staff/:id', principal, async (req, res) => {
       dob: isoDate.optional().nullable(),
       is_active: z.boolean().optional(),
       password: strongPassword.optional(),
+      reset_mfa: z.literal(true).optional(),
     }),
     req.body,
   );
   if (userId === req.auth!.user.id && b.is_active === false) throw badRequest('You cannot deactivate your own account');
+  if (userId === req.auth!.user.id && b.reset_mfa) throw badRequest('Use one of your recovery codes, or ask another Principal, to reset your own two-step login');
   const row = await q1(
     `UPDATE users SET full_name = COALESCE($2, full_name), email = COALESCE($3, email),
             phone = CASE WHEN $4::boolean THEN $5 ELSE phone END, dob = CASE WHEN $6::boolean THEN $7::date ELSE dob END,
@@ -76,8 +79,9 @@ r.patch('/staff/:id', principal, async (req, res) => {
     [userId, b.full_name ?? null, b.email ?? null, 'phone' in b, b.phone ?? null, 'dob' in b, b.dob ?? null, b.is_active ?? null, b.password ? await hashPassword(b.password) : null],
   );
   if (!row) throw notFound('Staff member not found');
-  if (b.is_active === false || b.password) await destroyAllSessions(userId);
-  await audit(req, 'staff.updated', 'user', userId, { fields: Object.keys(b).filter((k) => k !== 'password'), passwordReset: !!b.password });
+  if (b.reset_mfa) await resetMfa(userId);
+  if (b.is_active === false || b.password || b.reset_mfa) await destroyAllSessions(userId);
+  await audit(req, b.reset_mfa ? 'mfa.reset_by_principal' : 'staff.updated', 'user', userId, { fields: Object.keys(b).filter((k) => k !== 'password'), passwordReset: !!b.password });
   res.json({ ok: true });
 });
 

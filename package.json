@@ -18,10 +18,12 @@
     "migrate": "npm run migrate -w apps/api",
     "seed": "npm run seed -w apps/api",
     "create-principal": "npm run create-principal -w apps/api --",
+    "reset-mfa": "npm run reset-mfa -w apps/api --",
     "preflight": "node scripts/preflight.mjs",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "npm run lint -w apps/web",
     "test": "npm run test -w apps/api",
+    "e2e": "npm run e2e -w apps/web",
     "build": "npm run build -w apps/web",
     "check": "npm run typecheck && npm run lint && npm run test && npm audit --omit=dev --audit-level=high"
   }

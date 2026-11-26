@@ -10,6 +10,8 @@ export class ApiError extends Error {
   }
 }
 
+const OFFLINE_MESSAGE = 'Can’t reach the Shastra Connect server. Check your connection and try again.';
+
 /** The CSRF token lives in a readable cookie; it is echoed in a header on every write. */
 function csrfToken() {
   const m = document.cookie.match(/(?:^|;\s*)(?:__Host-)?sc_csrf=([^;]+)/);
@@ -25,11 +27,17 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     payload = JSON.stringify(body);
   }
   if (method !== 'GET') headers['X-CSRF-Token'] = csrfToken();
-  const res = await fetch(`/api${path}`, { method, headers, body: payload, credentials: 'same-origin', cache: 'no-store' });
+  let res: Response;
+  try {
+    res = await fetch(`/api${path}`, { method, headers, body: payload, credentials: 'same-origin', cache: 'no-store' });
+  } catch {
+    throw new ApiError(503, OFFLINE_MESSAGE);
+  }
   const isJson = res.headers.get('content-type')?.includes('json');
   const data = isJson ? await res.json() : null;
   if (!res.ok) {
     if (res.status === 401 && !path.startsWith('/auth/')) window.dispatchEvent(new Event('sc:signed-out'));
+    if (!data && res.status >= 502) throw new ApiError(res.status, OFFLINE_MESSAGE);
     throw new ApiError(res.status, data?.error ?? `Request failed (${res.status})`, data?.details);
   }
   return data as T;

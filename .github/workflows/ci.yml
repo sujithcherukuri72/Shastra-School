@@ -31,6 +31,7 @@ jobs:
       APP_ORIGIN: http://localhost:5173
       DATABASE_URL: postgresql://shastra_app:ci-password@localhost:5432/shastra
       SESSION_SECRET: ci-only-secret-0123456789abcdefghijklmnopqrstuvwxyz
+      MFA_ENCRYPTION_KEY: ci-only-mfa-key-0123456789abcdefghijklmnopqrstuvwxyz
       RUN_JOBS_IN_API: 'false'
     steps:
       - uses: actions/checkout@v5

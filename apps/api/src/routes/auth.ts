@@ -10,6 +10,9 @@ import { otpCode, safeEqual, serverHmac } from '../security/crypto.ts';
 import { limits, requireAuth } from '../security/middleware.ts';
 import { hashPassword, strongPassword, verifyPassword } from '../security/password.ts';
 import { clearSessionCookies, createSession, destroyAllSessions, destroySession } from '../security/sessions.ts';
+import QRCode from 'qrcode';
+import { checkSecondFactor, decryptSecret, endChallenge, issueRecoveryCodes, loadChallenge, mfaStatus, requiresMfa, spendAttempt, startChallenge } from '../security/mfa.ts';
+import { encryptSecret, newTotpSecret, otpauthUri, verifyTotp } from '../security/totp.ts';
 
 const r = Router();
 
@@ -48,11 +51,89 @@ r.post('/login', limits.login, async (req, res) => {
     throw unauthorized(GENERIC_LOGIN_ERROR);
   }
 
-  await q('UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = now() WHERE id = $1', [u.id]);
+  await q('UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = $1', [u.id]);
   if (req.auth) await destroySession(req.auth.sessionId); // prevent session fixation
+
+  // Principal and Office: the password alone never creates a session.
+  if (requiresMfa(u.role)) {
+    const step = await startChallenge(res, u);
+    await audit(req, 'login.password_ok_mfa_pending', 'user', u.id, { step }, undefined, u.id);
+    return void res.json({ ok: true, mfa: step });
+  }
+
+  await q('UPDATE users SET last_login_at = now() WHERE id = $1', [u.id]);
   await createSession(req, res, u);
   await audit(req, 'login.password', 'user', u.id, {}, undefined, u.id);
   res.json({ ok: true });
+});
+
+// ── Two-step login (Principal & Office) ─────────────────────────────────────
+const mfaExpired = () => unauthorized('Your sign-in step expired. Please enter your email and password again.');
+
+/** Enrolment: show the QR code for the authenticator app (secret saved only after a correct code). */
+r.get('/mfa/setup', limits.otpVerify, async (req, res) => {
+  const ch = await loadChallenge(req);
+  if (!ch || ch.purpose !== 'enroll') throw mfaExpired();
+  let secret: string;
+  if (ch.pending_secret_enc) secret = decryptSecret(ch.pending_secret_enc);
+  else {
+    secret = newTotpSecret();
+    await q('UPDATE mfa_challenges SET pending_secret_enc = $2 WHERE id = $1', [ch.id, encryptSecret(secret)]);
+  }
+  const u = await q1('SELECT email FROM users WHERE id = $1', [ch.user_id]);
+  const uri = otpauthUri(secret, u!.email);
+  res.json({ secret: secret.match(/.{1,4}/g)!.join(' '), otpauth: uri, qr: await QRCode.toDataURL(uri, { margin: 1, width: 220, errorCorrectionLevel: 'M' }) });
+});
+
+r.post('/mfa/enroll', limits.otpVerify, async (req, res) => {
+  const { code } = parse(z.strictObject({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from the app') }), req.body);
+  const ch = await loadChallenge(req);
+  if (!ch || ch.purpose !== 'enroll' || !ch.pending_secret_enc) throw mfaExpired();
+  if (!(await spendAttempt(ch))) throw mfaExpired();
+  const step = verifyTotp(decryptSecret(ch.pending_secret_enc), code, null);
+  if (step == null) throw badRequest('That code did not match. Check the time on your phone is automatic and try the newest code.');
+  const u = await q1('SELECT id, role FROM users WHERE id = $1 AND is_active', [ch.user_id]);
+  if (!u) throw mfaExpired();
+  const codes = await tx(async (db) => {
+    await q('UPDATE users SET totp_secret_enc = $2, totp_enabled_at = now(), totp_last_step = $3, last_login_at = now() WHERE id = $1', [u.id, ch.pending_secret_enc, step], db);
+    return issueRecoveryCodes(u.id, db);
+  });
+  await endChallenge(res, ch);
+  await createSession(req, res, u);
+  await audit(req, 'mfa.enrolled', 'user', u.id, {}, undefined, u.id);
+  res.json({ ok: true, recoveryCodes: codes });
+});
+
+r.post('/mfa/verify', limits.otpVerify, async (req, res) => {
+  const { code } = parse(z.strictObject({ code: z.string().trim().min(6).max(12) }), req.body);
+  const ch = await loadChallenge(req);
+  if (!ch || ch.purpose !== 'verify') throw mfaExpired();
+  if (!(await spendAttempt(ch))) {
+    await audit(req, 'mfa.too_many_attempts', 'user', ch.user_id, {}, undefined, ch.user_id);
+    throw mfaExpired();
+  }
+  const how = await tx((db) => checkSecondFactor(ch.user_id, code, db));
+  if (!how) {
+    await audit(req, 'mfa.failed', 'user', ch.user_id, {}, undefined, ch.user_id);
+    throw badRequest('That code is not correct. Use the newest 6-digit code from your authenticator app.');
+  }
+  const u = await q1('SELECT id, role FROM users WHERE id = $1 AND is_active', [ch.user_id]);
+  if (!u) throw mfaExpired();
+  await q('UPDATE users SET last_login_at = now() WHERE id = $1', [u.id]);
+  await endChallenge(res, ch);
+  await createSession(req, res, u);
+  await audit(req, how === 'recovery' ? 'login.mfa_recovery_code' : 'login.mfa', 'user', u.id, {}, undefined, u.id);
+  res.json({ ok: true, usedRecoveryCode: how === 'recovery' });
+});
+
+/** Signed-in Principal/Office: replace recovery codes (needs a current authenticator code). */
+r.post('/mfa/recovery-codes', requireAuth, limits.otpVerify, async (req, res) => {
+  const { code } = parse(z.strictObject({ code: z.string().trim().regex(/^\d{6}$/, 'Enter the 6-digit code from the app') }), req.body);
+  const how = await tx((db) => checkSecondFactor(req.auth!.user.id, code, db));
+  if (how !== 'totp') throw badRequest('That code is not correct');
+  const codes = await issueRecoveryCodes(req.auth!.user.id);
+  await audit(req, 'mfa.recovery_codes_regenerated', 'user', req.auth!.user.id);
+  res.json({ recoveryCodes: codes });
 });
 
 // ── Parents & students: one-time code on WhatsApp ───────────────────────────
@@ -150,6 +231,7 @@ async function me(req: import('express').Request, res: import('express').Respons
     school: { name: env.SCHOOL_NAME, shortName: env.SCHOOL_SHORT_NAME, city: env.SCHOOL_CITY },
     payments: { provider: env.PAYMENT_PROVIDER, keyId: env.PAYMENT_PROVIDER === 'razorpay' ? env.RAZORPAY_KEY_ID : null },
   };
+  if (requiresMfa(a.user.role)) out.mfa = await mfaStatus(a.user.id);
   if (a.user.role === 'parent' || a.user.role === 'student') {
     out.children = await q(
       `SELECT s.id, s.full_name, s.admission_no, s.roll_no, s.dob, sec.id AS section_id, sec.name AS section_name,
