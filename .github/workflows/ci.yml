@@ -34,7 +34,7 @@ jobs:
       MFA_ENCRYPTION_KEY: ci-only-mfa-key-0123456789abcdefghijklmnopqrstuvwxyz
       RUN_JOBS_IN_API: 'false'
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - uses: actions/setup-node@v5
         with: { node-version-file: .nvmrc, cache: npm }
@@ -51,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: check
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with: { persist-credentials: false }
       - run: docker build -f apps/api/Dockerfile -t shastra-api:ci .
       - run: docker build -f apps/web/Dockerfile -t shastra-web:ci .
