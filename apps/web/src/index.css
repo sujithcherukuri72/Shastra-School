@@ -1,0 +1,53 @@
+@import 'tailwindcss';
+@import '@fontsource-variable/plus-jakarta-sans';
+@import '@fontsource-variable/fraunces';
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans Variable', 'Segoe UI', system-ui, sans-serif;
+  --font-display: 'Fraunces Variable', Georgia, serif;
+
+  --color-navy-50: #f1f3f8;
+  --color-navy-100: #e2e6ef;
+  --color-navy-200: #c3cadb;
+  --color-navy-300: #94a0bd;
+  --color-navy-400: #5b6478;
+  --color-navy-500: #3a4560;
+  --color-navy-600: #26314d;
+  --color-navy-700: #1c2742;
+  --color-navy-800: #14213d;
+  --color-navy-900: #0d162b;
+
+  --color-brand-red: #e31b23;
+  --color-brand-gold: #ffb81c;
+  --color-brand-gold-soft: #fff4d6;
+  --color-paper: #f6f7fb;
+
+  --color-good: #1f9d55;
+  --color-warn: #d97706;
+  --color-bad: #d7312b;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-paper text-navy-800 font-sans antialiased;
+  }
+  h1,
+  h2,
+  h3 {
+    @apply text-navy-800;
+  }
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-brand-gold;
+  }
+}
+
+@utility stripe {
+  background: linear-gradient(90deg, #d7312b 0%, #f27d16 16%, #fbd10f 32%, #77c13d 50%, #55c6e2 70%, #3f8bc1 86%, #475d92 100%);
+}
+
+@utility safe-bottom {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+}

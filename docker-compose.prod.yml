@@ -1,0 +1,158 @@
+# Production stack on a single server:
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+# Only Caddy (80/443) is reachable from the internet. Postgres and the API stay on a private network.
+name: shastra
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+
+x-app-env: &app-env
+  NODE_ENV: production
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+  SCHOOL_NAME: ${SCHOOL_NAME}
+  SCHOOL_SHORT_NAME: ${SCHOOL_SHORT_NAME}
+  SCHOOL_CITY: ${SCHOOL_CITY}
+  SCHOOL_PHONE: ${SCHOOL_PHONE:-}
+  SCHOOL_ADDRESS: ${SCHOOL_ADDRESS:-}
+  SCHOOL_TIMEZONE: ${SCHOOL_TIMEZONE:-Asia/Kolkata}
+  RECEIPT_PREFIX: ${RECEIPT_PREFIX:-SHS}
+  API_PORT: 4000
+  APP_ORIGIN: https://${DOMAIN}
+  TRUST_PROXY: 1
+  DATABASE_URL: postgresql://${DB_APP_USER}:${DB_APP_PASSWORD}@db:5432/${DB_NAME}
+  SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+  STAFF_SESSION_HOURS: ${STAFF_SESSION_HOURS:-12}
+  FAMILY_SESSION_DAYS: ${FAMILY_SESSION_DAYS:-30}
+  UPLOAD_DIR: /data/storage
+  MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-15}
+  BIRTHDAY_SEND_TIME: ${BIRTHDAY_SEND_TIME:-08:00}
+  FEE_REMINDER_TIME: ${FEE_REMINDER_TIME:-09:00}
+  MONTHLY_REPORT_TIME: ${MONTHLY_REPORT_TIME:-10:00}
+  WHATSAPP_PROVIDER: ${WHATSAPP_PROVIDER:-meta}
+  WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v23.0}
+  WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID}
+  WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN}
+  WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET}
+  WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN}
+  WHATSAPP_TEMPLATE_LANG: ${WHATSAPP_TEMPLATE_LANG:-en}
+  PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-razorpay}
+  RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
+  RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+  RAZORPAY_WEBHOOK_SECRET: ${RAZORPAY_WEBHOOK_SECRET}
+  TZ: Asia/Kolkata
+
+services:
+  db:
+    <<: *hardening
+    image: postgres:19-alpine
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_SUPERUSER_PASSWORD:?set POSTGRES_SUPERUSER_PASSWORD}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+      DB_NAME: ${DB_NAME}
+      DB_APP_USER: ${DB_APP_USER}
+      DB_APP_PASSWORD: ${DB_APP_PASSWORD:?set DB_APP_PASSWORD}
+      TZ: Asia/Kolkata
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./docker/postgres/init-app-user.sh:/docker-entrypoint-initdb.d/10-init-app-user.sh:ro
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ${DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/api/Dockerfile }
+    image: shastra-api:latest
+    environment:
+      <<: *app-env
+      RUN_JOBS_IN_API: "false"
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [backend, frontend]
+
+  worker:
+    <<: *hardening
+    image: shastra-api:latest
+    pull_policy: never # built by the api service
+    command: ["node", "src/worker.ts"]
+    environment:
+      <<: *app-env
+      RUN_JOBS_IN_API: "false"
+    read_only: true
+    tmpfs: [/tmp]
+    volumes:
+      - storage:/data/storage
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [backend, frontend]
+    healthcheck:
+      disable: true
+
+  web:
+    <<: *hardening
+    build: { context: ., dockerfile: apps/web/Dockerfile }
+    image: shastra-web:latest
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      DOMAIN: ${DOMAIN:?set DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: { condition: service_healthy }
+    networks: [frontend]
+
+  # Nightly encrypted-at-rest friendly dump; copy /backups off the server (see docs/OPERATIONS.md).
+  backup:
+    <<: *hardening
+    image: postgres:19-alpine
+    cap_add: [CHOWN, SETGID, SETUID]
+    environment:
+      PGPASSWORD: ${DB_APP_PASSWORD}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          ts=$$(date +%F_%H%M)
+          pg_dump -h db -U ${DB_APP_USER} -d ${DB_NAME} -Fc -f /backups/shastra_$$ts.dump && echo "backup $$ts ok"
+          find /backups -name 'shastra_*.dump' -mtime +14 -delete
+          sleep 86400
+        done
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      db: { condition: service_healthy }
+    networks: [backend]
+
+networks:
+  # No internet access: only the database lives here.
+  backend:
+    internal: true
+  # Egress for WhatsApp / Razorpay APIs and ingress via Caddy.
+  frontend:
+
+volumes:
+  pgdata:
+  storage:
+  caddy_data:
+  caddy_config:

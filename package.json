@@ -1,0 +1,28 @@
+{
+  "name": "shastra-connect",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Shastra Connect - one app for the whole school (Principal, Office, Teachers, Parents, Students).",
+  "type": "module",
+  "engines": {
+    "node": ">=24.11"
+  },
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "db:up": "docker compose up -d db",
+    "db:reset": "docker compose down -v && docker compose up -d db",
+    "migrate": "npm run migrate -w apps/api",
+    "seed": "npm run seed -w apps/api",
+    "create-principal": "npm run create-principal -w apps/api --",
+    "preflight": "node scripts/preflight.mjs",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "npm run lint -w apps/web",
+    "test": "npm run test -w apps/api",
+    "build": "npm run build -w apps/web",
+    "check": "npm run typecheck && npm run lint && npm run test && npm audit --omit=dev --audit-level=high"
+  }
+}
